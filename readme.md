@@ -3,20 +3,20 @@ java应用的内存主要分为三块
 1. jvm管理的堆内存
 2. jvm管理的非堆内存
 3. 非jvm管理的内存
-## 1.1. JVM 管理的堆内存（Heap Memory）
+## 1.1. JVM管理的堆内存（Heap Memory）
 存储对象实例，是 Java 内存管理的核心区域，由所有线程共享。
 -  **新生代（Young Generation）**：存放新创建的对象，包括 Eden 区和两个 Survivor 区（S0、S1），对象在此经历多次 GC 后若存活会晋升到老年代。
 - **老年代（Old Generation）**：存储生命周期较长的对象，如长期持有的缓存对象。
-## 1.2. JVM 管理的非堆内存（Non-Heap Memory）
+## 1.2. JVM管理的非堆内存（Non-Heap Memory）
 存储与JVM运行时环境相关的数据，不直接存放对象实例。
 -  **元空间（Metaspace）**：逻辑上仍属堆外内存，但由JVM管理，存放类结构、方法字节码、静态变量等。
 - **JVM 栈（JVM Stack）**：每个线程独有，存储栈帧（局部变量、方法参数、操作数栈等），栈深度过大会导致`StackOverflowError`。
 - **本地方法栈（Native Method Stack）**：用于调用 Native 方法（如 JVM 底层 C/C++ 代码）的栈空间。
 - **程序计数器（Program Counter Register）**：记录当前线程执行的字节码位置，是最小的内存区域。
-## 1.3. 非 JVM 管理的内存（Off-Heap Memory）
+## 1.3. 非JVM管理的内存（Off-Heap Memory）
 由操作系统直接管理，JVM通过本地接口访问，不受JVM堆内存限制。
 - **直接内存（Direct Memory）**：通过`java.nio.ByteBuffer.allocateDirect()`创建，用于NIO操作（如文件读写、网络通信），避免堆内存与本地内存的拷贝开销。
-- **JNI本地内存**：通过JNI调用C/C++代码分配的内存，需手动释放（如使用`Unsafe.freeMemory()`），否则可能导致内存泄漏。
+- **JNI本地内存**：通过JNI调用C/C++代码分配的内存，需手动释放（如使用malloc,free等），否则可能导致内存泄漏。
 - **堆外缓存**：如Redis客户端、Netty框架的内存池，直接使用系统内存提高性能。
 > [!warning]
 非 JVM 管理的内存不受 GC 控制，若使用不当（如大量分配未释放），可能导致系统 OOM（Out of Memory）
@@ -34,7 +34,7 @@ git clone git@github.com:shinerio/java_memory_occupy_analyzer.git
 ```shell
 java -XX:NativeMemoryTracking=detail -Xms256m -Xmx256m -XX:MetaspaceSize=64m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=5,filesize=10M -jar demo-0.0.1-SNAPSHOT.jar
 ```
-## 2.2. heap占用和释放
+## 2.2. heap memory
 ### 2.2.1. 测试命令
 ```shell
 curl localhost:8080/heap/128
@@ -109,7 +109,7 @@ Total: reserved=878MB, committed=174MB
 ```
 [2025-07-02T23:01:41.604+0800][147.067s][info][gc             ] GC(7) Pause Full (System.gc()) 143M->11M(256M) 25.176ms
 ```
-## 2.3. ByteBuffer.allocateDirect()分配内存实验
+## 2.3. ByteBuffer.allocateDirect
 直接内存的大小默认与xmx值相当，可通过以下命令显示指定
 ```bash
 -XX:MaxDirectMemorySize=128m
@@ -164,9 +164,25 @@ java.lang.OutOfMemoryError: Cannot reserve 134217728 bytes of direct buffer memo
 ### 2.3.5. rss观测
 通过`ByteBuffer.allocateDirect`分配和释放的内存会立即体现在RSS的变化上。
 ![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507022243125.png)
-## 2.4. 直接使用unsafe
+## 2.4. netty(PooledByteBufAllocator)
+### 2.4.1. 命令
+```shell
+curl localhost:8080/netty/128
+curl localhost:8080/netty/release
+```
+### 2.4.2. oom
+```
+java.lang.OutOfMemoryError: Cannot reserve 536870912 bytes of direct buffer memory (allocated: 4237314, limit: 268435456)
+```
+### 2.4.3. arthas观测
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032250775.png)
+### 2.4.4. jcmd观测
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032253844.png)
+### 2.4.5. rss观测
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032255387.png)
+## 2.5. unsafe
 直接使用unsafe命令分配的内存不受`-XX:MaxDirectMemorySize`控制
-### 2.4.1. OOM
+### 2.5.1. OOM
 连续执行`curl localhost:8080/unsafe/512`尝试分配内存，当超过系统物理内存上限后，进程会被直接kill
 ```
 2025-07-02T23:08:27.140+08:00  INFO 2181 --- [demo] [nio-8080-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
@@ -180,15 +196,15 @@ Jul  2 23:09:16 shinerio-huoshan kernel: oom-kill:constraint=CONSTRAINT_NONE,nod
 Jul  2 23:09:16 shinerio-huoshan kernel: Out of memory: Killed process 2181 (java) total-vm:3353044kB, anon-rss:1445296kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:3164kB oom_score_adj:0
 Jul  2 23:09:16 shinerio-huoshan systemd[1]: session-1.scope: A process of this unit has been killed by the OOM killer.
 ```
-### 2.4.2. 测试命令
+### 2.5.2. 测试命令
 ```shell
 curl localhost:8080/unsafe/128
 curl localhost:8080/unsafe/release
 ```
-### 2.4.3. arthas观测
+### 2.5.3. arthas观测
 unsafe命令直接分配和释放的内存无法通过arthas观察
 ![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507022320627.png)
-### 2.4.4. jcmd观测
+### 2.5.4. jcmd观测
 分配前(无other)
 ```
 -                 Java Heap (reserved=256MB, committed=256MB)
@@ -210,9 +226,56 @@ unsafe命令直接分配和释放的内存无法通过arthas观察
 -                     Other (reserved=0MB, committed=0MB)
                             (malloc=0MB #7) (peak=128MB #6) 
 ```
-### 2.4.5. RSS占用情况
+### 2.5.5. rss观测
 直接使用unsafe命令分配和释放的内存可以通过jcmd观测
 ![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507022325168.png)
+### 2.5.6. pmap观测
+输出内存显示为`anon`
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032332888.png)
+
+## 2.6. JNI
+### 2.6.1. 启动
+```shell
+java -XX:NativeMemoryTracking=detail -Xms256m -Xmx256m -XX:MetaspaceSize=64m -XX:MaxMetaspaceSize=256m -XX:+UseG1GC -Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=5,filesize=10M -Djava.library.path=$PROJECT_ROOT/src/main/native -jar demo-0.0.1-SNAPSHOT.jar
+```
+### 2.6.2. 测试命令
+```shell
+curl localhost:8080/jni/128
+curl localhost:8080/jni/release
+```
+### 2.6.3. oom
+执行`curl localhost:8080/jni/1280`分配超大内存
+```
+# 应用被系统自动kill
+2025-07-03T22:18:00.323+08:00  INFO 23454 --- [demo] [nio-8080-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 1 ms
+Killed
+
+# 系统日志显示oom并自动kill进程
+Jul  3 22:18:12 shinerio-huoshan kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=tuned.service,mems_allowed=0-1,global_oom,task_memcg=/user.slice/user-0.slice/session-7.scope,task=java,pid=23454,uid=0
+Jul  3 22:18:12 shinerio-huoshan kernel: Out of memory: Killed process 23454 (java) total-vm:3615188kB, anon-rss:1458780kB, file-rss:0kB, shmem-rss:0kB, UID:0 pgtables:3180kB oom_score_adj:0
+Jul  3 22:18:12 shinerio-huoshan systemd[1]: session-7.scope: A process of this unit has been killed by the OOM killer.
+```
+### 2.6.4. arthas观测
+arthas无法观察到通过`jni`直接调用`malloc`分配的内存
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032232844.png)
+### 2.6.5. jcmd观测
+arthas无法观察到通过`jni`直接调用`malloc`分配的内存
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032242304.png)
+### 2.6.6. rss观测
+通过`jni`直接调用`malloc`分配和释放的内存会体现在系统rss指标上
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032243038.png)
+### 2.6.7. pmap观测
+```shell
+pmap -x `ps -ef|grep demo|grep -v grep|awk '{print $2}'` | sort -nrk3
+```
+1. Linux将进程内存虚拟为伪文件/proc/$pid/mem，通过它即可查看进程内存中的数据。
+2. tail用于偏移到指定内存段的起始地址，即pmap的第一列，head用于读取指定大小，即pmap的第二列。
+3. strings用于找出内存中的字符串数据，less用于查看strings输出的字符串。如果内存中不是字符串，也可以不加strings原样输出
+```shell
+tail -c +$((0x00007face0000000+1)) /proc/`ps -ef|grep demo|grep -v grep|awk '{print $2}'`/mem|head -c $((11616*1024))|strings|less -S
+```
+通过jni分配的内存显示为`anno`
+![image.png](https://shinerio.oss-cn-beijing.aliyuncs.com/obsidian202507032314044.png)
 # 3. 原理
 ## 3.1. Bits类
 `Bits.reserveMemory`和`Bits.unreserveMemory`会更新JVM内部的直接内存计数器，Arthas可以通过读取这些计数器来显示直接内存使用情况。
